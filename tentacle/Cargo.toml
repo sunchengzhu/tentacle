@@ -95,6 +95,34 @@ required-features = ["unstable"]
 name = "quic_simple"
 required-features = ["quic"]
 
+[[example]]
+name = "quic_qa_error_matrix"
+required-features = ["quic"]
+
+[[example]]
+name = "quic_qa_coexist"
+required-features = ["quic"]
+
+[[example]]
+name = "quic_qa_idle_timeout"
+required-features = ["quic"]
+
+[[example]]
+name = "quic_qa_listener_survives_bad_handshake"
+required-features = ["quic"]
+
+[[example]]
+name = "quic_qa_duplicate_dial"
+required-features = ["quic"]
+
+[[example]]
+name = "quic_qa_peer_id_dedup"
+required-features = ["quic"]
+
+[[example]]
+name = "quic_qa_keep_alive"
+required-features = ["quic"]
+
 [[test]]
 name = "test_quic_verifier"
 required-features = ["quic"]
