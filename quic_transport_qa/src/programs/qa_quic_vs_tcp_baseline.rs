@@ -13,13 +13,22 @@
 //!   - failure count (timeouts)
 //!
 //! Environment:
-//!   QA_REQUESTS    default 2000
-//!   QA_PAYLOAD     default 1024  (bytes)
-//!   QA_TIMEOUT_MS  default 15000 (per-transport wall budget)
+//!   QA_REQUESTS         default 2000
+//!   QA_PAYLOAD          default 1024  (bytes)
+//!   QA_TIMEOUT_MS       default 15000 (per-transport wall budget)
+//!   QA_PARITY_P95_RATIO default 0     (0 = report-only; >0 = QUIC p95 must
+//!                                       be <= TCP p95 * RATIO, otherwise FAIL)
 //!
-//! PASS iff both transports finish within the wall budget and observe zero
-//! round-trip failures. The numbers themselves are reported but never gate
-//! the verdict.
+//! PASS conditions:
+//!   * Both transports finish within the wall budget.
+//!   * Both transports observe zero round-trip failures.
+//!   * Optional: if `QA_PARITY_P95_RATIO > 0`, QUIC's p95 latency must be
+//!     within that multiplier of TCP's p95.
+//!
+//! The throughput / latency numbers themselves are always reported for
+//! tracking; they only gate the verdict when the parity ratio is set
+//! explicitly. (Default `0` keeps this program purely descriptive for the
+//! "is QUIC even close to TCP on a stock laptop" baseline question.)
 
 use std::{
     process::ExitCode,
@@ -128,7 +137,13 @@ fn pct(sorted: &[u64], p: f64) -> u64 {
     sorted[idx]
 }
 
-fn run_one(label: &'static str, listen: Multiaddr, requests: usize, payload: usize, budget: Duration) -> Run {
+fn run_one(
+    label: &'static str,
+    listen: Multiaddr,
+    requests: usize,
+    payload: usize,
+    budget: Duration,
+) -> Run {
     // Server side
     let server_key = SecioKeyPair::secp256k1_generated();
     let server_pid = server_key.peer_id();
@@ -140,8 +155,12 @@ fn run_one(label: &'static str, listen: Multiaddr, requests: usize, payload: usi
             .name(format!("baseline-server-{label}"))
             .spawn(move || {
                 let rt = tokio::runtime::Runtime::new().unwrap();
-                let mut svc =
-                    build_quic_service(server_key, vec![server_meta(PROTO_ID)], (), QuicConfig::default());
+                let mut svc = build_quic_service(
+                    server_key,
+                    vec![server_meta(PROTO_ID)],
+                    (),
+                    QuicConfig::default(),
+                );
                 rt.block_on(async move {
                     let real = svc.listen(listen).await.expect("server listen");
                     *server_ctrl.lock().unwrap() = Some(svc.control().clone());
@@ -158,13 +177,12 @@ fn run_one(label: &'static str, listen: Multiaddr, requests: usize, payload: usi
         .build()
         .unwrap();
 
-    let server_addr = driver_rt
-        .block_on(async {
-            tokio::time::timeout(Duration::from_secs(10), server_addr_rx)
-                .await
-                .expect("server addr timeout")
-                .expect("server addr")
-        });
+    let server_addr = driver_rt.block_on(async {
+        tokio::time::timeout(Duration::from_secs(10), server_addr_rx)
+            .await
+            .expect("server addr timeout")
+            .expect("server addr")
+    });
     let dial_addr: Multiaddr = format!("{server_addr}/p2p/{}", server_pid.to_base58())
         .parse()
         .unwrap();
@@ -275,7 +293,11 @@ fn print_run(r: &Run) {
     let p95 = pct(&r.samples_ns, 0.95);
     let p99 = pct(&r.samples_ns, 0.99);
     let secs = r.elapsed.as_secs_f64();
-    let rps = if secs > 0.0 { r.samples_ns.len() as f64 / secs } else { 0.0 };
+    let rps = if secs > 0.0 {
+        r.samples_ns.len() as f64 / secs
+    } else {
+        0.0
+    };
     println!(
         "[{}] reqs={} payload={}B elapsed={:.2}s rps={:.1} p50={:.2}ms p95={:.2}ms p99={:.2}ms failures={}",
         r.label,
@@ -326,8 +348,38 @@ fn main() -> ExitCode {
         }
         if r.elapsed > budget {
             fail = true;
-            println!("FAIL — {} exceeded budget {:?} (took {:?})", r.label, budget, r.elapsed);
+            println!(
+                "FAIL — {} exceeded budget {:?} (took {:?})",
+                r.label, budget, r.elapsed
+            );
         }
+    }
+    let parity_ratio: f64 = env::env_or("QA_PARITY_P95_RATIO", 0.0_f64);
+    if parity_ratio > 0.0 {
+        let tcp_p95 = pct(&tcp.samples_ns, 0.95) as f64;
+        let quic_p95 = pct(&quic.samples_ns, 0.95) as f64;
+        let allowed = tcp_p95 * parity_ratio;
+        println!(
+            "[parity] tcp_p95={:.2}ms quic_p95={:.2}ms allowed=tcp*{}={:.2}ms",
+            tcp_p95 / 1e6,
+            quic_p95 / 1e6,
+            parity_ratio,
+            allowed / 1e6,
+        );
+        if quic_p95 > allowed {
+            fail = true;
+            println!(
+                "FAIL — QUIC p95 {:.2}ms exceeded TCP p95 * {} = {:.2}ms",
+                quic_p95 / 1e6,
+                parity_ratio,
+                allowed / 1e6,
+            );
+        }
+    } else {
+        println!(
+            "[parity] QA_PARITY_P95_RATIO unset → latency comparison is \
+             report-only (no FAIL on perf delta)"
+        );
     }
     if fail {
         ExitCode::from(1)

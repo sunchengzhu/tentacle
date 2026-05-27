@@ -67,7 +67,11 @@ impl ServiceProtocol for GossipProto {
     async fn init(&mut self, _ctx: &mut ProtocolContext) {}
 
     async fn connected(&mut self, ctx: ProtocolContextMutRef<'_>, _v: &str) {
-        log::debug!("[node {}] peer connected: {}", self.my_id, ctx.session.address);
+        log::debug!(
+            "[node {}] peer connected: {}",
+            self.my_id,
+            ctx.session.address
+        );
     }
 
     async fn received(&mut self, _ctx: ProtocolContextMutRef<'_>, data: Bytes) {
@@ -118,7 +122,9 @@ fn main() -> ExitCode {
     );
 
     // Build per-node identities up-front so dial addresses can include /p2p/<pid>.
-    let keys: Vec<SecioKeyPair> = (0..n).map(|_| SecioKeyPair::secp256k1_generated()).collect();
+    let keys: Vec<SecioKeyPair> = (0..n)
+        .map(|_| SecioKeyPair::secp256k1_generated())
+        .collect();
     let peer_ids: Vec<_> = keys.iter().map(|k| k.peer_id()).collect();
 
     // Each node publishes its `listen` address through a oneshot once the
@@ -182,11 +188,16 @@ fn main() -> ExitCode {
         .map(|(a, pid)| format!("{a}/p2p/{}", pid.to_base58()).parse().unwrap())
         .collect();
 
-    // Each node dials every other node. Use the control captured per node.
+    // Build the mesh: for every unordered pair {i, j}, only the lower-indexed
+    // node dials. tentacle sessions are bidirectional, so this still produces
+    // a fully-connected mesh, but it avoids the duplicate-dial / connection-race
+    // pathology where both ends try to open a session to each other at the
+    // exact same moment. (We have a dedicated `qa_quic_*` example for that
+    // contract — it should NOT contaminate the gossip QA.)
     for (i, ctrl_slot) in controls.iter().enumerate() {
         let ctrl = ctrl_slot.lock().unwrap().clone().expect("control captured");
         for (j, addr) in dial_addrs.iter().enumerate() {
-            if i == j {
+            if i >= j {
                 continue;
             }
             let ctrl = ctrl.clone();
@@ -235,14 +246,13 @@ fn main() -> ExitCode {
     thread::sleep(duration);
     stop.store(true, std::sync::atomic::Ordering::Relaxed);
 
-    let sent_per_node: Vec<u64> = rt
-        .block_on(async {
-            let mut out = Vec::new();
-            for h in bcast_handles {
-                out.push(h.await.unwrap_or(0));
-            }
-            out
-        });
+    let sent_per_node: Vec<u64> = rt.block_on(async {
+        let mut out = Vec::new();
+        for h in bcast_handles {
+            out.push(h.await.unwrap_or(0));
+        }
+        out
+    });
 
     // Drain a small grace window so in-flight messages settle.
     thread::sleep(Duration::from_millis(500));

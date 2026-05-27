@@ -12,13 +12,17 @@
 //! Verdict PASS iff:
 //!   * loss == 0 across the whole run,
 //!   * no idle-timeout disconnect (we set max_idle_timeout=30s + keep-alive=1s),
-//!   * RSS growth from min-window to max-window <= `QA_RSS_GROWTH_PCT`.
+//!   * RSS growth from min-window to max-window <= `QA_RSS_GROWTH_PCT`,
+//!   * per-window throughput stays within ±`QA_TPUT_DRIFT_PCT` (default 25%)
+//!     of the mean window throughput — catches gradual stalls / starvation
+//!     that wouldn't show up as outright disconnects.
 //!
 //! Env overrides:
 //!   QA_SOAK_SECS         default 30
 //!   QA_PERIOD_MS         default 20  (=> ~50 req/s steady)
 //!   QA_RSS_GROWTH_PCT    default 50  (allow 1.5x growth, generous; useful as
 //!                                      leak smoke test, not a tight bound)
+//!   QA_TPUT_DRIFT_PCT    default 25  (max |window - mean| / mean, in percent)
 
 use std::{
     process::ExitCode,
@@ -129,10 +133,11 @@ fn main() -> ExitCode {
     let secs = env::env_or::<u64>("QA_SOAK_SECS", 30);
     let period = Duration::from_millis(env::env_or("QA_PERIOD_MS", 20u64));
     let max_growth_pct: f64 = env::env_or("QA_RSS_GROWTH_PCT", 50.0_f64);
+    let max_tput_drift_pct: f64 = env::env_or("QA_TPUT_DRIFT_PCT", 25.0_f64);
 
     println!(
-        "[driver] soak={}s period={:?} max_rss_growth_pct={}",
-        secs, period, max_growth_pct
+        "[driver] soak={}s period={:?} max_rss_growth_pct={} max_tput_drift_pct={}",
+        secs, period, max_growth_pct, max_tput_drift_pct
     );
 
     // ── server ──
@@ -165,13 +170,12 @@ fn main() -> ExitCode {
         .enable_all()
         .build()
         .unwrap();
-    let server_addr = driver_rt
-        .block_on(async {
-            tokio::time::timeout(Duration::from_secs(10), server_addr_rx)
-                .await
-                .expect("server addr timeout")
-                .expect("server addr")
-        });
+    let server_addr = driver_rt.block_on(async {
+        tokio::time::timeout(Duration::from_secs(10), server_addr_rx)
+            .await
+            .expect("server addr timeout")
+            .expect("server addr")
+    });
     let dial_addr: Multiaddr = format!("{server_addr}/p2p/{}", server_pid.to_base58())
         .parse()
         .unwrap();
@@ -305,6 +309,26 @@ fn main() -> ExitCode {
         fmt_bytes(rss_min),
         fmt_bytes(rss_max),
         growth_pct,
+    ); // Throughput stability over per-bucket windows.
+    let (mean_tput, max_drift_pct) = if window_throughput.is_empty() {
+        (0.0, 0.0)
+    } else {
+        let mean = window_throughput.iter().sum::<f64>() / window_throughput.len() as f64;
+        let drift = if mean > 0.0 {
+            window_throughput
+                .iter()
+                .map(|t| ((t - mean).abs() / mean) * 100.0)
+                .fold(0.0_f64, f64::max)
+        } else {
+            0.0
+        };
+        (mean, drift)
+    };
+    println!(
+        "throughput windows={} mean={:.1}/s max_drift={:.1}%",
+        window_throughput.len(),
+        mean_tput,
+        max_drift_pct,
     );
     if let Err(e) = &outcome {
         println!("send-side error: {e}");
@@ -325,6 +349,15 @@ fn main() -> ExitCode {
         println!(
             "FAIL — RSS growth {:.1}% exceeded threshold {:.1}%",
             growth_pct, max_growth_pct
+        );
+    }
+    // Require >= 2 windows before judging throughput stability; with a 2s
+    // bucket that means QA_SOAK_SECS must be >= 4 to gate this assertion.
+    if window_throughput.len() >= 2 && max_drift_pct > max_tput_drift_pct {
+        fail = true;
+        println!(
+            "FAIL — throughput drift {:.1}% exceeded threshold {:.1}%",
+            max_drift_pct, max_tput_drift_pct
         );
     }
     if fail {
