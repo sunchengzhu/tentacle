@@ -1,0 +1,33 @@
+[package]
+name = "quic-transport-qa"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88.0"
+publish = false
+description = "System-level transport QA programs for tentacle QUIC (mixed mesh, jitter/reconnect, soak, TCP/QUIC baseline)."
+
+[dependencies]
+tentacle = { path = "../tentacle", default-features = false, features = ["tokio-runtime", "tokio-timer", "quic"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
+futures = "0.3"
+async-trait = "0.1"
+bytes = "1"
+env_logger = "0.10"
+log = "0.4"
+libc = "0.2"
+
+[[bin]]
+name = "qa_mixed_transport_gossip"
+path = "src/programs/qa_mixed_transport_gossip.rs"
+
+[[bin]]
+name = "qa_quic_jitter_reconnect"
+path = "src/programs/qa_quic_jitter_reconnect.rs"
+
+[[bin]]
+name = "qa_quic_soak"
+path = "src/programs/qa_quic_soak.rs"
+
+[[bin]]
+name = "qa_quic_vs_tcp_baseline"
+path = "src/programs/qa_quic_vs_tcp_baseline.rs"

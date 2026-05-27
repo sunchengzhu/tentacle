@@ -6,6 +6,7 @@ members = [
   "multiaddr",
   "tentacle",
   "bench",
+  "quic_transport_qa",
 ]
 exclude = [
   "protocols/discovery",
