@@ -47,3 +47,11 @@ path = "src/programs/qa_quic_concurrent_sessions.rs"
 [[bin]]
 name = "qa_quic_handshake_storm"
 path = "src/programs/qa_quic_handshake_storm.rs"
+
+[[bin]]
+name = "qa_wan_server"
+path = "src/programs/qa_wan_server.rs"
+
+[[bin]]
+name = "qa_wan_client"
+path = "src/programs/qa_wan_client.rs"
