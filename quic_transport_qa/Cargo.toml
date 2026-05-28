@@ -35,3 +35,15 @@ path = "src/programs/qa_quic_vs_tcp_baseline.rs"
 [[bin]]
 name = "qa_quic_wan_stability"
 path = "src/programs/qa_quic_wan_stability.rs"
+
+[[bin]]
+name = "qa_large_message_throughput"
+path = "src/programs/qa_large_message_throughput.rs"
+
+[[bin]]
+name = "qa_quic_concurrent_sessions"
+path = "src/programs/qa_quic_concurrent_sessions.rs"
+
+[[bin]]
+name = "qa_quic_handshake_storm"
+path = "src/programs/qa_quic_handshake_storm.rs"
