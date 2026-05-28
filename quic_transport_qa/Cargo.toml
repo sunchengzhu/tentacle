@@ -31,3 +31,7 @@ path = "src/programs/qa_quic_soak.rs"
 [[bin]]
 name = "qa_quic_vs_tcp_baseline"
 path = "src/programs/qa_quic_vs_tcp_baseline.rs"
+
+[[bin]]
+name = "qa_quic_wan_stability"
+path = "src/programs/qa_quic_wan_stability.rs"
